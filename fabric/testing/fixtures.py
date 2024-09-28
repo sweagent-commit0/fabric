@@ -14,26 +14,17 @@ For example, if you intend to use the `remote` and `client` fixtures::
 
 .. versionadded:: 2.1
 """
-
 from unittest.mock import patch, Mock
-
 try:
     from pytest import fixture
 except ImportError:
     import warnings
-
-    warning = (
-        "You appear to be missing some optional test-related dependencies;"
-        "please 'pip install fabric[pytest]'."
-    )
+    warning = "You appear to be missing some optional test-related dependencies;please 'pip install fabric[pytest]'."
     warnings.warn(warning, ImportWarning)
     raise
-
 from .. import Connection
 from ..transfer import Transfer
-
 from .base import MockRemote, MockSFTP
-
 
 @fixture
 def connection():
@@ -51,24 +42,9 @@ def connection():
 
     .. versionadded:: 2.1
     """
-    c = Connection(host="host", user="user")
-    c.config.run.in_stream = False
-    c.run = Mock()
-    c.local = Mock()
-    # TODO: rest of API should get mocked too
-    # TODO: is there a nice way to mesh with MockRemote et al? Is that ever
-    # really that useful for code that just wants to assert about how run() and
-    # friends were called?
-    yield c
-
-
-#: A convenience rebinding of `connection`.
-#:
-#: .. versionadded:: 2.1
+    pass
 cxn = connection
 
-
-# TODO 4.0: remove old remote() and make this the new remote()
 @fixture
 def remote_with_sftp():
     """
@@ -78,12 +54,7 @@ def remote_with_sftp():
     functionality was called), note that the returned `MockRemote` object has a
     ``.sftp`` attribute when created in this mode.
     """
-    # NOTE: recall that by default an instantiated MockRemote has a single
-    # internal anonymous session; so these fixtures are useful for autouse
-    # guardrails.
-    with MockRemote(enable_sftp=True) as remote:
-        yield remote
-
+    pass
 
 @fixture
 def remote():
@@ -97,11 +68,7 @@ def remote():
 
     .. versionadded:: 2.1
     """
-    remote = MockRemote()
-    yield remote
-    remote.safety()
-    remote.stop()
-
+    pass
 
 @fixture
 def sftp():
@@ -116,13 +83,7 @@ def sftp():
 
     .. versionadded:: 2.1
     """
-    mock = MockSFTP(autostart=False)
-    client, mock_os = mock.start()
-    # Regular ol transfer to save some time
-    transfer = Transfer(Connection("host"))
-    yield transfer, client, mock_os
-    # TODO: old mock_sftp() lacked any 'stop'...why? feels bad man
-
+    pass
 
 @fixture
 def sftp_objs(sftp):
@@ -131,8 +92,7 @@ def sftp_objs(sftp):
 
     .. versionadded:: 2.1
     """
-    yield sftp[:2]
-
+    pass
 
 @fixture
 def transfer(sftp):
@@ -141,8 +101,7 @@ def transfer(sftp):
 
     .. versionadded:: 2.1
     """
-    yield sftp[0]
-
+    pass
 
 @fixture
 def client():
@@ -184,7 +143,4 @@ def client():
 
     .. versionadded:: 2.1
     """
-    with patch("fabric.connection.SSHClient") as SSHClient:
-        client = SSHClient.return_value
-        client.get_transport.return_value = Mock(active=True)
-        yield client
+    pass

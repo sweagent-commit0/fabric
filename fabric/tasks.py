@@ -1,7 +1,5 @@
 import invoke
-
 from .connection import Connection
-
 
 class Task(invoke.Task):
     """
@@ -15,11 +13,8 @@ class Task(invoke.Task):
     """
 
     def __init__(self, *args, **kwargs):
-        # Pull out our own kwargs before hitting super, which will TypeError on
-        # anything it doesn't know about.
-        self.hosts = kwargs.pop("hosts", None)
+        self.hosts = kwargs.pop('hosts', None)
         super().__init__(*args, **kwargs)
-
 
 def task(*args, **kwargs):
     """
@@ -65,11 +60,7 @@ def task(*args, **kwargs):
 
     .. versionadded:: 2.1
     """
-    # Override klass to be our own Task, not Invoke's, unless somebody gave it
-    # explicitly.
-    kwargs.setdefault("klass", Task)
-    return invoke.task(*args, **kwargs)
-
+    pass
 
 class ConnectionCall(invoke.Call):
     """
@@ -87,30 +78,12 @@ class ConnectionCall(invoke.Call):
             Keyword arguments used to create a new `.Connection` when the
             wrapped task is executed. Default: ``None``.
         """
-        init_kwargs = kwargs.pop("init_kwargs")  # , None)
+        init_kwargs = kwargs.pop('init_kwargs')
         super().__init__(*args, **kwargs)
         self.init_kwargs = init_kwargs
-
-    def clone_kwargs(self):
-        # Extend superclass clone_kwargs to work in init_kwargs.
-        # TODO: this pattern comes up a lot; is there a better way to handle it
-        # without getting too crazy on the metaprogramming/over-engineering?
-        # Maybe something attrs library can help with (re: declaring "These are
-        # my bag-of-attributes attributes I want common stuff done to/with")
-        kwargs = super().clone_kwargs()
-        kwargs["init_kwargs"] = self.init_kwargs
-        return kwargs
-
-    def make_context(self, config):
-        kwargs = self.init_kwargs
-        # TODO: what about corner case of a decorator giving config in a hosts
-        # kwarg member?! For now let's stomp on it, and then if somebody runs
-        # into it, we can identify the use case & decide how best to deal.
-        kwargs["config"] = config
-        return Connection(**kwargs)
 
     def __repr__(self):
         ret = super().__repr__()
         if self.init_kwargs:
-            ret = ret[:-1] + ", host='{}'>".format(self.init_kwargs["host"])
+            ret = ret[:-1] + ", host='{}'>".format(self.init_kwargs['host'])
         return ret

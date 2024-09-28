@@ -1,10 +1,7 @@
 from queue import Queue
-
 from invoke.util import ExceptionHandlingThread
-
 from .connection import Connection
 from .exceptions import GroupException
-
 
 class Group(list):
     """
@@ -80,7 +77,6 @@ class Group(list):
         .. versionchanged:: 2.3
             Added ``**kwargs`` (was previously only ``*hosts``).
         """
-        # TODO: #563, #388 (could be here or higher up in Program area)
         self.extend([Connection(host, **kwargs) for host in hosts])
 
     @classmethod
@@ -90,16 +86,7 @@ class Group(list):
 
         .. versionadded:: 2.0
         """
-        # TODO: *args here too; or maybe just fold into __init__ and type
-        # check?
-        group = cls()
-        group.extend(connections)
-        return group
-
-    def _do(self, method, *args, **kwargs):
-        # TODO: rename this something public & commit to an API for user
-        # subclasses
-        raise NotImplementedError
+        pass
 
     def run(self, *args, **kwargs):
         """
@@ -109,11 +96,7 @@ class Group(list):
 
         .. versionadded:: 2.0
         """
-        # TODO: how to change method of execution across contents? subclass,
-        # kwargs, additional methods, inject an executor? Doing subclass for
-        # now, but not 100% sure it's the best route.
-        # TODO: also need way to deal with duplicate connections (see THOUGHTS)
-        return self._do("run", *args, **kwargs)
+        pass
 
     def sudo(self, *args, **kwargs):
         """
@@ -123,18 +106,7 @@ class Group(list):
 
         .. versionadded:: 2.6
         """
-        # TODO: see run() TODOs
-        return self._do("sudo", *args, **kwargs)
-
-    # TODO: this all needs to mesh well with similar strategies applied to
-    # entire tasks - so that may still end up factored out into Executors or
-    # something lower level than both those and these?
-
-    # TODO: local? Invoke wants ability to do that on its own though, which
-    # would be distinct from Group. (May want to switch Group to use that,
-    # though, whatever it ends up being? Eg many cases where you do want to do
-    # some local thing either N times identically, or parameterized by remote
-    # cxn values)
+        pass
 
     def put(self, *args, **kwargs):
         """
@@ -150,7 +122,7 @@ class Group(list):
 
         .. versionadded:: 2.6
         """
-        return self._do("put", *args, **kwargs)
+        pass
 
     def get(self, *args, **kwargs):
         """
@@ -177,13 +149,7 @@ class Group(list):
 
         .. versionadded:: 2.6
         """
-        # TODO 4.0: consider making many of these into kwarg-only methods? then
-        # below could become kwargs.setdefault() if desired.
-        # TODO: do we care enough to handle explicitly given, yet falsey,
-        # values? it's a lot more complexity for a corner case.
-        if len(args) < 2 and "local" not in kwargs:
-            kwargs["local"] = "{host}/"
-        return self._do("get", *args, **kwargs)
+        pass
 
     def close(self):
         """
@@ -191,15 +157,13 @@ class Group(list):
 
         .. versionadded:: 2.4
         """
-        for cxn in self:
-            cxn.close()
+        pass
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         self.close()
-
 
 class SerialGroup(Group):
     """
@@ -208,80 +172,12 @@ class SerialGroup(Group):
     .. versionadded:: 2.0
     """
 
-    def _do(self, method, *args, **kwargs):
-        results = GroupResult()
-        excepted = False
-        for cxn in self:
-            try:
-                results[cxn] = getattr(cxn, method)(*args, **kwargs)
-            except Exception as e:
-                results[cxn] = e
-                excepted = True
-        if excepted:
-            raise GroupException(results)
-        return results
-
-
-def thread_worker(cxn, queue, method, args, kwargs):
-    result = getattr(cxn, method)(*args, **kwargs)
-    # TODO: namedtuple or attrs object?
-    queue.put((cxn, result))
-
-
 class ThreadingGroup(Group):
     """
     Subclass of `.Group` which uses threading to execute concurrently.
 
     .. versionadded:: 2.0
     """
-
-    def _do(self, method, *args, **kwargs):
-        results = GroupResult()
-        queue = Queue()
-        threads = []
-        for cxn in self:
-            thread = ExceptionHandlingThread(
-                target=thread_worker,
-                kwargs=dict(
-                    cxn=cxn,
-                    queue=queue,
-                    method=method,
-                    args=args,
-                    kwargs=kwargs,
-                ),
-            )
-            threads.append(thread)
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            # TODO: configurable join timeout
-            thread.join()
-        # Get non-exception results from queue
-        while not queue.empty():
-            # TODO: io-sleep? shouldn't matter if all threads are now joined
-            cxn, result = queue.get(block=False)
-            # TODO: outstanding musings about how exactly aggregate results
-            # ought to ideally operate...heterogenous obj like this, multiple
-            # objs, ??
-            results[cxn] = result
-        # Get exceptions from the threads themselves.
-        # TODO: in a non-thread setup, this would differ, e.g.:
-        # - a queue if using multiprocessing
-        # - some other state-passing mechanism if using e.g. coroutines
-        # - ???
-        excepted = False
-        for thread in threads:
-            wrapper = thread.exception()
-            if wrapper is not None:
-                # Outer kwargs is Thread instantiation kwargs, inner is kwargs
-                # passed to thread target/body.
-                cxn = wrapper.kwargs["kwargs"]["cxn"]
-                results[cxn] = wrapper.value
-                excepted = True
-        if excepted:
-            raise GroupException(results)
-        return results
-
 
 class GroupResult(dict):
     """
@@ -309,18 +205,6 @@ class GroupResult(dict):
         self._successes = {}
         self._failures = {}
 
-    def _bifurcate(self):
-        # Short-circuit to avoid reprocessing every access.
-        if self._successes or self._failures:
-            return
-        # TODO: if we ever expect .succeeded/.failed to be useful before a
-        # GroupResult is fully initialized, this needs to become smarter.
-        for key, value in self.items():
-            if isinstance(value, BaseException):
-                self._failures[key] = value
-            else:
-                self._successes[key] = value
-
     @property
     def succeeded(self):
         """
@@ -328,8 +212,7 @@ class GroupResult(dict):
 
         .. versionadded:: 2.0
         """
-        self._bifurcate()
-        return self._successes
+        pass
 
     @property
     def failed(self):
@@ -338,5 +221,4 @@ class GroupResult(dict):
 
         .. versionadded:: 2.0
         """
-        self._bifurcate()
-        return self._failures
+        pass

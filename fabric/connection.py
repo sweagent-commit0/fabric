@@ -2,7 +2,6 @@ from contextlib import contextmanager
 from io import StringIO
 from threading import Event
 import socket
-
 from decorator import decorator
 from invoke import Context
 from invoke.exceptions import ThreadException
@@ -10,41 +9,10 @@ from paramiko.agent import AgentRequestHandler
 from paramiko.client import SSHClient, AutoAddPolicy
 from paramiko.config import SSHConfig
 from paramiko.proxy import ProxyCommand
-
 from .config import Config
 from .exceptions import InvalidV1Env
 from .transfer import Transfer
 from .tunnels import TunnelManager, Tunnel
-
-
-@decorator
-def opens(method, self, *args, **kwargs):
-    self.open()
-    return method(self, *args, **kwargs)
-
-
-def derive_shorthand(host_string):
-    user_hostport = host_string.rsplit("@", 1)
-    hostport = user_hostport.pop()
-    user = user_hostport[0] if user_hostport and user_hostport[0] else None
-
-    # IPv6: can't reliably tell where addr ends and port begins, so don't
-    # try (and don't bother adding special syntax either, user should avoid
-    # this situation by using port=).
-    if hostport.count(":") > 1:
-        host = hostport
-        port = None
-    # IPv4: can split on ':' reliably.
-    else:
-        host_port = hostport.rsplit(":", 1)
-        host = host_port.pop(0) or None
-        port = host_port[0] if host_port and host_port[0] else None
-
-    if port is not None:
-        port = int(port)
-
-    return {"user": user, "host": host, "port": port}
-
 
 class Connection(Context):
     """
@@ -120,13 +88,6 @@ class Connection(Context):
 
     .. versionadded:: 2.0
     """
-
-    # NOTE: these are initialized here to hint to invoke.Config.__setattr__
-    # that they should be treated as real attributes instead of config proxies.
-    # (Additionally, we're doing this instead of using invoke.Config._set() so
-    # we can take advantage of Sphinx's attribute-doc-comment static analysis.)
-    # Once an instance is created, these values will usually be non-None
-    # because they default to the default config values.
     host = None
     original_host = None
     user = None
@@ -164,60 +125,9 @@ class Connection(Context):
 
         .. versionadded:: 2.4
         """
-        # TODO: import fabric.state.env (need good way to test it first...)
-        # TODO: how to handle somebody accidentally calling this in a process
-        # where 'fabric' is fabric 2, and there's no fabric 1? Probably just a
-        # re-raise of ImportError??
-        # Our only requirement is a non-empty host_string
-        if not env.host_string:
-            raise InvalidV1Env(
-                "Supplied v1 env has an empty `host_string` value! Please make sure you're calling Connection.from_v1 within a connected Fabric 1 session."  # noqa
-            )
-        # TODO: detect collisions with kwargs & except instead of overwriting?
-        # (More Zen of Python compliant, but also, effort, and also, makes it
-        # harder for users to intentionally overwrite!)
-        connect_kwargs = kwargs.setdefault("connect_kwargs", {})
-        kwargs.setdefault("host", env.host_string)
-        shorthand = derive_shorthand(env.host_string)
-        # TODO: don't we need to do the below skipping for user too?
-        kwargs.setdefault("user", env.user)
-        # Skip port if host string seemed to have it; otherwise we hit our own
-        # ambiguity clause in __init__. v1 would also have been doing this
-        # anyways (host string wins over other settings).
-        if not shorthand["port"]:
-            # Run port through int(); v1 inexplicably has a string default...
-            kwargs.setdefault("port", int(env.port))
-        # key_filename defaults to None in v1, but in v2, we expect it to be
-        # either unset, or set to a list. Thus, we only pull it over if it is
-        # not None.
-        if env.key_filename is not None:
-            connect_kwargs.setdefault("key_filename", env.key_filename)
-        # Obtain config values, if not given, from its own from_v1
-        # NOTE: not using setdefault as we truly only want to call
-        # Config.from_v1 when necessary.
-        if "config" not in kwargs:
-            kwargs["config"] = Config.from_v1(env)
-        return cls(**kwargs)
+        pass
 
-    # TODO: should "reopening" an existing Connection object that has been
-    # closed, be allowed? (See e.g. how v1 detects closed/semi-closed
-    # connections & nukes them before creating a new client to the same host.)
-    # TODO: push some of this into paramiko.client.Client? e.g. expand what
-    # Client.exec_command does, it already allows configuring a subset of what
-    # we do / will eventually do / did in 1.x. It's silly to have to do
-    # .get_transport().open_session().
-    def __init__(
-        self,
-        host,
-        user=None,
-        port=None,
-        config=None,
-        gateway=None,
-        forward_agent=None,
-        connect_timeout=None,
-        connect_kwargs=None,
-        inline_ssh_env=None,
-    ):
+    def __init__(self, host, user=None, port=None, config=None, gateway=None, forward_agent=None, connect_timeout=None, connect_kwargs=None, inline_ssh_env=None):
         """
         Set up a new object representing a server connection.
 
@@ -369,194 +279,63 @@ class Connection(Context):
             config value has now changed and defaults to ``True``, not
             ``False``.
         """
-        # NOTE: parent __init__ sets self._config; for now we simply overwrite
-        # that below. If it's somehow problematic we would want to break parent
-        # __init__ up in a manner that is more cleanly overrideable.
         super().__init__(config=config)
-
-        #: The .Config object referenced when handling default values (for e.g.
-        #: user or port, when not explicitly given) or deciding how to behave.
         if config is None:
             config = Config()
-        # Handle 'vanilla' Invoke config objects, which need cloning 'into' one
-        # of our own Configs (which grants the new defaults, etc, while not
-        # squashing them if the Invoke-level config already accounted for them)
         elif not isinstance(config, Config):
             config = config.clone(into=Config)
         self._set(_config=config)
-        # TODO: when/how to run load_files, merge, load_shell_env, etc?
-        # TODO: i.e. what is the lib use case here (and honestly in invoke too)
-
         shorthand = self.derive_shorthand(host)
-        host = shorthand["host"]
-        err = "You supplied the {} via both shorthand and kwarg! Please pick one."  # noqa
-        if shorthand["user"] is not None:
+        host = shorthand['host']
+        err = 'You supplied the {} via both shorthand and kwarg! Please pick one.'
+        if shorthand['user'] is not None:
             if user is not None:
-                raise ValueError(err.format("user"))
-            user = shorthand["user"]
-        if shorthand["port"] is not None:
+                raise ValueError(err.format('user'))
+            user = shorthand['user']
+        if shorthand['port'] is not None:
             if port is not None:
-                raise ValueError(err.format("port"))
-            port = shorthand["port"]
-
-        # NOTE: we load SSH config data as early as possible as it has
-        # potential to affect nearly every other attribute.
-        #: The per-host SSH config data, if any. (See :ref:`ssh-config`.)
+                raise ValueError(err.format('port'))
+            port = shorthand['port']
         self.ssh_config = self.config.base_ssh_config.lookup(host)
-
         self.original_host = host
-        #: The hostname of the target server.
         self.host = host
-        if "hostname" in self.ssh_config:
-            # TODO: log that this occurred?
-            self.host = self.ssh_config["hostname"]
-
-        #: The username this connection will use to connect to the remote end.
-        self.user = user or self.ssh_config.get("user", self.config.user)
-        # TODO: is it _ever_ possible to give an empty user value (e.g.
-        # user='')? E.g. do some SSH server specs allow for that?
-
-        #: The network port to connect on.
-        self.port = port or int(self.ssh_config.get("port", self.config.port))
-
-        # Gateway/proxy/bastion/jump setting: non-None values - string,
-        # Connection, even eg False - get set directly; None triggers seek in
-        # config/ssh_config
-        #: The gateway `.Connection` or ``ProxyCommand`` string to be used,
-        #: if any.
+        if 'hostname' in self.ssh_config:
+            self.host = self.ssh_config['hostname']
+        self.user = user or self.ssh_config.get('user', self.config.user)
+        self.port = port or int(self.ssh_config.get('port', self.config.port))
         self.gateway = gateway if gateway is not None else self.get_gateway()
-        # NOTE: we use string above, vs ProxyCommand obj, to avoid spinning up
-        # the ProxyCommand subprocess at init time, vs open() time.
-        # TODO: make paramiko.proxy.ProxyCommand lazy instead?
-
         if forward_agent is None:
-            # Default to config...
             forward_agent = self.config.forward_agent
-            # But if ssh_config is present, it wins
-            if "forwardagent" in self.ssh_config:
-                # TODO: SSHConfig really, seriously needs some love here, god
-                map_ = {"yes": True, "no": False}
-                forward_agent = map_[self.ssh_config["forwardagent"]]
-        #: Whether agent forwarding is enabled.
+            if 'forwardagent' in self.ssh_config:
+                map_ = {'yes': True, 'no': False}
+                forward_agent = map_[self.ssh_config['forwardagent']]
         self.forward_agent = forward_agent
-
         if connect_timeout is None:
-            connect_timeout = self.ssh_config.get(
-                "connecttimeout", self.config.timeouts.connect
-            )
+            connect_timeout = self.ssh_config.get('connecttimeout', self.config.timeouts.connect)
         if connect_timeout is not None:
             connect_timeout = int(connect_timeout)
-        #: Connection timeout
         self.connect_timeout = connect_timeout
-
-        #: Keyword arguments given to `paramiko.client.SSHClient.connect` when
-        #: `open` is called.
         self.connect_kwargs = self.resolve_connect_kwargs(connect_kwargs)
-
-        #: The `paramiko.client.SSHClient` instance this connection wraps.
         client = SSHClient()
         client.set_missing_host_key_policy(AutoAddPolicy())
         self.client = client
-
-        #: A convenience handle onto the return value of
-        #: ``self.client.get_transport()`` (after connection time).
         self.transport = None
-
         if inline_ssh_env is None:
             inline_ssh_env = self.config.inline_ssh_env
-        #: Whether to construct remote command lines with env vars prefixed
-        #: inline.
         self.inline_ssh_env = inline_ssh_env
 
-    def resolve_connect_kwargs(self, connect_kwargs):
-        # TODO: is it better to pre-empt conflicts w/ manually-handled
-        # connect() kwargs (hostname, username, etc) here or in open()? We're
-        # doing open() for now in case e.g. someone manually modifies
-        # .connect_kwargs attributewise, but otherwise it feels better to do it
-        # early instead of late.
-        constructor_kwargs = connect_kwargs or {}
-        config_kwargs = self.config.connect_kwargs
-        constructor_keys = constructor_kwargs.get("key_filename", [])
-        config_keys = config_kwargs.get("key_filename", [])
-        ssh_config_keys = self.ssh_config.get("identityfile", [])
-
-        # Default data: constructor if given, config otherwise
-        final_kwargs = constructor_kwargs or config_kwargs
-
-        # Key filename: merge, in order, config (which includes CLI flags),
-        # then constructor kwargs, and finally SSH config file data.
-        # Make sure all are normalized to list as well!
-        final_keys = []
-        for value in (config_keys, constructor_keys, ssh_config_keys):
-            if isinstance(value, str):
-                value = [value]
-            final_keys.extend(value)
-        # Only populate if non-empty.
-        if final_keys:
-            final_kwargs["key_filename"] = final_keys
-
-        return final_kwargs
-
-    def get_gateway(self):
-        # SSH config wins over Invoke-style config
-        if "proxyjump" in self.ssh_config:
-            # Reverse hop1,hop2,hop3 style ProxyJump directive so we start
-            # with the final (itself non-gatewayed) hop and work up to
-            # the front (actual, supplied as our own gateway) hop
-            hops = reversed(self.ssh_config["proxyjump"].split(","))
-            prev_gw = None
-            for hop in hops:
-                # Short-circuit if we appear to be our own proxy, which would
-                # be a RecursionError. Implies SSH config wildcards.
-                # TODO: in an ideal world we'd check user/port too in case they
-                # differ, but...seriously? They can file a PR with those extra
-                # half dozen test cases in play, E_NOTIME
-                if self.derive_shorthand(hop)["host"] == self.host:
-                    return None
-                # Happily, ProxyJump uses identical format to our host
-                # shorthand...
-                kwargs = dict(config=self.config.clone())
-                if prev_gw is not None:
-                    kwargs["gateway"] = prev_gw
-                cxn = Connection(hop, **kwargs)
-                prev_gw = cxn
-            return prev_gw
-        elif "proxycommand" in self.ssh_config:
-            # Just a string, which we interpret as a proxy command..
-            return self.ssh_config["proxycommand"]
-        # Fallback: config value (may be None).
-        return self.config.gateway
-
     def __repr__(self):
-        # Host comes first as it's the most common differentiator by far
-        bits = [("host", self.host)]
-        # TODO: maybe always show user regardless? Explicit is good...
+        bits = [('host', self.host)]
         if self.user != self.config.user:
-            bits.append(("user", self.user))
-        # TODO: harder to make case for 'always show port'; maybe if it's
-        # non-22 (even if config has overridden the local default)?
+            bits.append(('user', self.user))
         if self.port != self.config.port:
-            bits.append(("port", self.port))
-        # NOTE: sometimes self.gateway may be eg False if someone wants to
-        # explicitly override a configured non-None value (as otherwise it's
-        # impossible for __init__ to tell if a None means "nothing given" or
-        # "seriously please no gatewaying". So, this must always be a vanilla
-        # truth test and not eg "is not None".
+            bits.append(('port', self.port))
         if self.gateway:
-            # Displaying type because gw params would probs be too verbose
-            val = "proxyjump"
+            val = 'proxyjump'
             if isinstance(self.gateway, str):
-                val = "proxycommand"
-            bits.append(("gw", val))
-        return "<Connection {}>".format(
-            " ".join("{}={}".format(*x) for x in bits)
-        )
-
-    def _identity(self):
-        # TODO: consider including gateway and maybe even other init kwargs?
-        # Whether two cxns w/ same user/host/port but different
-        # gateway/keys/etc, should be considered "the same", is unclear.
-        return (self.host, self.user, self.port)
+                val = 'proxycommand'
+            bits.append(('gw', val))
+        return '<Connection {}>'.format(' '.join(('{}={}'.format(*x) for x in bits)))
 
     def __eq__(self, other):
         if not isinstance(other, Connection):
@@ -567,15 +346,7 @@ class Connection(Context):
         return self._identity() < other._identity()
 
     def __hash__(self):
-        # NOTE: this departs from Context/DataProxy, which is not usefully
-        # hashable.
         return hash(self._identity())
-
-    def derive_shorthand(self, host_string):
-        # NOTE: used to be defined inline; preserving API call for both
-        # backwards compatibility and because it seems plausible we may want to
-        # modify behavior later, using eg config or other attributes.
-        return derive_shorthand(host_string)
 
     @property
     def is_connected(self):
@@ -584,7 +355,7 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        return self.transport.active if self.transport else False
+        pass
 
     def open(self):
         """
@@ -609,62 +380,7 @@ class Connection(Context):
             Now returns the inner Paramiko connect call's return value instead
             of always returning the implicit ``None``.
         """
-        # Short-circuit
-        if self.is_connected:
-            return
-        err = "Refusing to be ambiguous: connect() kwarg '{}' was given both via regular arg and via connect_kwargs!"  # noqa
-        # These may not be given, period
-        for key in """
-            hostname
-            port
-            username
-        """.split():
-            if key in self.connect_kwargs:
-                raise ValueError(err.format(key))
-        # These may be given one way or the other, but not both
-        if (
-            "timeout" in self.connect_kwargs
-            and self.connect_timeout is not None
-        ):
-            raise ValueError(err.format("timeout"))
-        # No conflicts -> merge 'em together
-        kwargs = dict(
-            self.connect_kwargs,
-            username=self.user,
-            hostname=self.host,
-            port=self.port,
-        )
-        if self.gateway:
-            kwargs["sock"] = self.open_gateway()
-        if self.connect_timeout:
-            kwargs["timeout"] = self.connect_timeout
-        # Strip out empty defaults for less noisy debugging
-        if "key_filename" in kwargs and not kwargs["key_filename"]:
-            del kwargs["key_filename"]
-        auth_strategy_class = self.authentication.strategy_class
-        if auth_strategy_class is not None:
-            # Pop connect_kwargs related to auth to avoid giving Paramiko
-            # conflicting signals.
-            for key in (
-                "allow_agent",
-                "key_filename",
-                "look_for_keys",
-                "passphrase",
-                "password",
-                "pkey",
-                "username",
-            ):
-                kwargs.pop(key, None)
-
-            kwargs["auth_strategy"] = auth_strategy_class(
-                ssh_config=self.ssh_config,
-                fabric_config=self.config,
-                username=self.user,
-            )
-        # Actually connect!
-        result = self.client.connect(**kwargs)
-        self.transport = self.client.get_transport()
-        return result
+        pass
 
     def open_gateway(self):
         """
@@ -677,34 +393,7 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        # ProxyCommand is faster to set up, so do it first.
-        if isinstance(self.gateway, str):
-            # Leverage a dummy SSHConfig to ensure %h/%p/etc are parsed.
-            # TODO: use real SSH config once loading one properly is
-            # implemented.
-            ssh_conf = SSHConfig()
-            dummy = "Host {}\n    ProxyCommand {}"
-            ssh_conf.parse(StringIO(dummy.format(self.host, self.gateway)))
-            return ProxyCommand(ssh_conf.lookup(self.host)["proxycommand"])
-        # Handle inner-Connection gateway type here.
-        # TODO: logging
-        self.gateway.open()
-        # TODO: expose the opened channel itself as an attribute? (another
-        # possible argument for separating the two gateway types...) e.g. if
-        # someone wanted to piggyback on it for other same-interpreter socket
-        # needs...
-        # TODO: and the inverse? allow users to supply their own socket/like
-        # object they got via $WHEREEVER?
-        # TODO: how best to expose timeout param? reuse general connection
-        # timeout from config?
-        return self.gateway.transport.open_channel(
-            kind="direct-tcpip",
-            dest_addr=(self.host, int(self.port)),
-            # NOTE: src_addr needs to be 'empty but not None' values to
-            # correctly encode into a network message. Theoretically Paramiko
-            # could auto-interpret None sometime & save us the trouble.
-            src_addr=("", 0),
-        )
+        pass
 
     def close(self):
         """
@@ -718,32 +407,13 @@ class Connection(Context):
         .. versionchanged:: 3.0
             Now closes SFTP sessions too (2.x required manually doing so).
         """
-        if self._sftp is not None:
-            self._sftp.close()
-            self._sftp = None
-
-        if self.is_connected:
-            self.client.close()
-            if self.forward_agent and self._agent_handler is not None:
-                self._agent_handler.close()
+        pass
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         self.close()
-
-    @opens
-    def create_session(self):
-        channel = self.transport.open_session()
-        if self.forward_agent:
-            self._agent_handler = AgentRequestHandler(channel)
-        return channel
-
-    def _remote_runner(self):
-        return self.config.runners.remote(
-            context=self, inline_env=self.inline_ssh_env
-        )
 
     @opens
     def run(self, command, **kwargs):
@@ -760,7 +430,7 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        return self._run(self._remote_runner(), command, **kwargs)
+        pass
 
     @opens
     def sudo(self, command, **kwargs):
@@ -774,7 +444,7 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        return self._sudo(self._remote_runner(), command, **kwargs)
+        pass
 
     @opens
     def shell(self, **kwargs):
@@ -836,25 +506,7 @@ class Connection(Context):
 
         .. versionadded:: 2.7
         """
-        runner = self.config.runners.remote_shell(context=self)
-        # Reinstate most defaults as explicit kwargs to ensure user's config
-        # doesn't make this mode break horribly. Then override a few that need
-        # to change, like pty.
-        allowed = ("encoding", "env", "in_stream", "replace_env", "watchers")
-        new_kwargs = {}
-        for key, value in self.config.global_defaults()["run"].items():
-            if key in allowed:
-                # Use allowed kwargs if given, otherwise also fill them from
-                # defaults
-                new_kwargs[key] = kwargs.pop(key, self.config.run[key])
-            else:
-                new_kwargs[key] = value
-        new_kwargs.update(pty=True)
-        # At this point, any leftover kwargs would be ignored, so yell instead
-        if kwargs:
-            err = "shell() got unexpected keyword arguments: {!r}"
-            raise TypeError(err.format(list(kwargs.keys())))
-        return runner.run(command=None, **new_kwargs)
+        pass
 
     def local(self, *args, **kwargs):
         """
@@ -865,9 +517,7 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        # Superclass run() uses runners.local, so we can literally just call it
-        # straight.
-        return super().run(*args, **kwargs)
+        pass
 
     @opens
     def sftp(self):
@@ -881,9 +531,7 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        if self._sftp is None:
-            self._sftp = self.client.open_sftp()
-        return self._sftp
+        pass
 
     def get(self, *args, **kwargs):
         """
@@ -894,7 +542,7 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        return Transfer(self).get(*args, **kwargs)
+        pass
 
     def put(self, *args, **kwargs):
         """
@@ -905,20 +553,11 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        return Transfer(self).put(*args, **kwargs)
+        pass
 
-    # TODO: yield the socket for advanced users? Other advanced use cases
-    # (perhaps factor out socket creation itself)?
-    # TODO: probably push some of this down into Paramiko
     @contextmanager
     @opens
-    def forward_local(
-        self,
-        local_port,
-        remote_port=None,
-        remote_host="localhost",
-        local_host="localhost",
-    ):
+    def forward_local(self, local_port, remote_port=None, remote_host='localhost', local_host='localhost'):
         """
         Open a tunnel connecting ``local_port`` to the server's environment.
 
@@ -959,65 +598,11 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        if not remote_port:
-            remote_port = local_port
+        pass
 
-        # TunnelManager does all of the work, sitting in the background (so we
-        # can yield) and spawning threads every time somebody connects to our
-        # local port.
-        finished = Event()
-        manager = TunnelManager(
-            local_port=local_port,
-            local_host=local_host,
-            remote_port=remote_port,
-            remote_host=remote_host,
-            # TODO: not a huge fan of handing in our transport, but...?
-            transport=self.transport,
-            finished=finished,
-        )
-        manager.start()
-
-        # Return control to caller now that things ought to be operational
-        try:
-            yield
-        # Teardown once user exits block
-        finally:
-            # Signal to manager that it should close all open tunnels
-            finished.set()
-            # Then wait for it to do so
-            manager.join()
-            # Raise threading errors from within the manager, which would be
-            # one of:
-            # - an inner ThreadException, which was created by the manager on
-            # behalf of its Tunnels; this gets directly raised.
-            # - some other exception, which would thus have occurred in the
-            # manager itself; we wrap this in a new ThreadException.
-            # NOTE: in these cases, some of the metadata tracking in
-            # ExceptionHandlingThread/ExceptionWrapper/ThreadException (which
-            # is useful when dealing with multiple nearly-identical sibling IO
-            # threads) is superfluous, but it doesn't feel worth breaking
-            # things up further; we just ignore it for now.
-            wrapper = manager.exception()
-            if wrapper is not None:
-                if wrapper.type is ThreadException:
-                    raise wrapper.value
-                else:
-                    raise ThreadException([wrapper])
-
-            # TODO: cancel port forward on transport? Does that even make sense
-            # here (where we used direct-tcpip) vs the opposite method (which
-            # is what uses forward-tcpip)?
-
-    # TODO: probably push some of this down into Paramiko
     @contextmanager
     @opens
-    def forward_remote(
-        self,
-        remote_port,
-        local_port=None,
-        remote_host="127.0.0.1",
-        local_host="localhost",
-    ):
+    def forward_remote(self, remote_port, local_port=None, remote_host='127.0.0.1', local_host='localhost'):
         """
         Open a tunnel connecting ``remote_port`` to the local environment.
 
@@ -1062,54 +647,4 @@ class Connection(Context):
 
         .. versionadded:: 2.0
         """
-        if not local_port:
-            local_port = remote_port
-        # Callback executes on each connection to the remote port and is given
-        # a Channel hooked up to said port. (We don't actually care about the
-        # source/dest host/port pairs at all; only whether the channel has data
-        # to read and suchlike.)
-        # We then pair that channel with a new 'outbound' socket connection to
-        # the local host/port being forwarded, in a new Tunnel.
-        # That Tunnel is then added to a shared data structure so we can track
-        # & close them during shutdown.
-        #
-        # TODO: this approach is less than ideal because we have to share state
-        # between ourselves & the callback handed into the transport's own
-        # thread handling (which is roughly analogous to our self-controlled
-        # TunnelManager for local forwarding). See if we can use more of
-        # Paramiko's API (or improve it and then do so) so that isn't
-        # necessary.
-        tunnels = []
-
-        def callback(channel, src_addr_tup, dst_addr_tup):
-            sock = socket.socket()
-            # TODO: handle connection failure such that channel, etc get closed
-            sock.connect((local_host, local_port))
-            # TODO: we don't actually need to generate the Events at our level,
-            # do we? Just let Tunnel.__init__ do it; all we do is "press its
-            # button" on shutdown...
-            tunnel = Tunnel(channel=channel, sock=sock, finished=Event())
-            tunnel.start()
-            # Communication between ourselves & the Paramiko handling subthread
-            tunnels.append(tunnel)
-
-        # Ask Paramiko (really, the remote sshd) to call our callback whenever
-        # connections are established on the remote iface/port.
-        # transport.request_port_forward(remote_host, remote_port, callback)
-        try:
-            self.transport.request_port_forward(
-                address=remote_host, port=remote_port, handler=callback
-            )
-            yield
-        finally:
-            # TODO: see above re: lack of a TunnelManager
-            # TODO: and/or also refactor with TunnelManager re: shutdown logic.
-            # E.g. maybe have a non-thread TunnelManager-alike with a method
-            # that acts as the callback? At least then there's a tiny bit more
-            # encapsulation...meh.
-            for tunnel in tunnels:
-                tunnel.finished.set()
-                tunnel.join()
-            self.transport.cancel_port_forward(
-                address=remote_host, port=remote_port
-            )
+        pass
