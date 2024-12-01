@@ -125,7 +125,32 @@ class Connection(Context):
 
         .. versionadded:: 2.4
         """
-        pass
+        config = Config()
+        # Map Fabric 1 env vars to Fabric 2 config
+        if 'user' in env:
+            config['user'] = env['user']
+        if 'port' in env:
+            config['port'] = env['port']
+        if 'host_string' in env:
+            host = env['host_string']
+        else:
+            raise InvalidV1Env("Missing required 'host_string' in env")
+        if 'key_filename' in env:
+            config['connect_kwargs'] = {'key_filename': env['key_filename']}
+        if 'password' in env:
+            config['connect_kwargs'] = config.get('connect_kwargs', {})
+            config['connect_kwargs']['password'] = env['password']
+        if 'gateway' in env:
+            config['gateway'] = env['gateway']
+        if 'forward_agent' in env:
+            config['forward_agent'] = env['forward_agent']
+        if 'connect_timeout' in env:
+            config['timeouts'] = {'connect': env['connect_timeout']}
+        
+        # Update with any additional kwargs
+        config.update(kwargs)
+        
+        return cls(host, config=config)
 
     def __init__(self, host, user=None, port=None, config=None, gateway=None, forward_agent=None, connect_timeout=None, connect_kwargs=None, inline_ssh_env=None):
         """
